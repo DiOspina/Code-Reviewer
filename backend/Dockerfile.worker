@@ -1,0 +1,38 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Descargar modelos de tree-sitter
+RUN python -c "
+import tree_sitter_python as tspython
+import tree_sitter_javascript as tsjavascript
+import tree_sitter_typescript as tstypescript
+import tree_sitter_go as tsgo
+import tree_sitter_rust as tsrust
+import tree_sitter_java as tsjava
+print('Tree-sitter languages loaded successfully')
+"
+
+COPY . .
+
+RUN mkdir -p /tmp/agent_reviewer
+
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app /tmp/agent_reviewer
+USER app
+
+CMD ["python", "-m", "app.workers.main"]

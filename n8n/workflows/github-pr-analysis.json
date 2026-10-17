@@ -1,0 +1,507 @@
+{
+  "name": "GitHub PR Analysis Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github",
+        "options": {}
+      },
+      "id": "1",
+      "name": "GitHub Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "github-pr-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "const payload = items[0].json;\nconst event = $json[\"X-GitHub-Event\"] || payload.headers?.['x-github-event'];\nconst action = payload.body?.action;\n\n// Only process pull_request events with relevant actions\nif (event !== 'pull_request') {\n  return [{ json: { skip: true, reason: `Not a pull_request event: ${event}` } }];\n}\n\nconst relevantActions = ['opened', 'synchronize', 'reopened', 'ready_for_review'];\nif (!relevantActions.includes(action)) {\n  return [{ json: { skip: true, reason: `Action not relevant: ${action}` } }];\n}\n\n// Extract key information\nconst repo = payload.body.repository;\nconst pr = payload.body.pull_request;\nconst installation = payload.body.installation;\n\nreturn [{\n  json: {\n    event: 'pull_request',\n    action: action,\n    repository: {\n      id: repo.id,\n      name: repo.name,\n      full_name: repo.full_name,\n      html_url: repo.html_url,\n      clone_url: repo.clone_url,\n      default_branch: repo.default_branch,\n      owner_login: repo.owner.login,\n      installation_id: installation?.id\n    },\n    pull_request: {\n      number: pr.number,\n      title: pr.title,\n      body: pr.body,\n      head_sha: pr.head.sha,\n      base_sha: pr.base.sha,\n      head_ref: pr.head.ref,\n      base_ref: pr.base.ref,\n      html_url: pr.html_url,\n      user: pr.user.login\n    },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "2",
+      "name": "Filter PR Events",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://backend:8000/api/v1/webhooks/github",
+        "method": "POST",
+        "options": {},
+        "jsonParameters": true,
+        "headerParametersJson": "{\n  \"Content-Type\": \"application/json\",\n  \"X-GitHub-Event\": \"{{ $json.event }}\",\n  \"X-GitHub-Delivery\": \"{{ $runId }}\"\n}",
+        "bodyParametersJson": "={{ JSON.stringify($json) }}"
+      },
+      "id": "3",
+      "name": "Trigger Backend Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const response = items[0].json;\n\nif (response.status === 'queued') {\n  return [{\n    json: {\n      success: true,\n      analysis_id: response.analysis_id,\n      message: `Analysis queued for PR #${$json.pull_request.number} in ${$json.repository.full_name}`\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: false,\n    error: response.detail || 'Failed to queue analysis'\n  }\n}];"
+      },
+      "id": "4",
+      "name": "Process Backend Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const pr = $json.pull_request;\nconst repo = $json.repository;\n\nconst message = `✅ *Analysis Queued*\\n` +\n  `Repository: ${repo.full_name}\\n` +\n  `PR: #${pr.number} - ${pr.title}\\n` +\n  `Author: @${pr.user}\\n` +\n  `Analysis ID: ${$json.analysis_id}\\n` +\n  `Triggered: ${new Date().toLocaleString()}`;\n\nreturn [{ json: { text: message, channel: '#code-reviews' } }];"
+      },
+      "id": "6",
+      "name": "Format Slack Success",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "const error = $json.error || 'Unknown error';\nconst pr = $json.pull_request;\nconst repo = $json.repository;\n\nconst message = `❌ *Analysis Failed to Queue*\\n` +\n  `Repository: ${repo.full_name}\\n` +\n  `PR: #${pr.number} - ${pr.title}\\n` +\n  `Error: ${error}\\n` +\n  `Time: ${new Date().toLocaleString()}`;\n\nreturn [{ json: { text: message, channel: '#code-reviews-alerts' } }];"
+      },
+      "id": "7",
+      "name": "Format Slack Error",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.slackWebhookUrl }}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ JSON.stringify({ text: $json.text }) }}"
+      },
+      "id": "8",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const pr = $json.pull_request;\nconst repo = $json.repository;\n\nconst message = `🔍 *Code Analysis Started*\\n` +\n  `📦 *Repository:* [${repo.full_name}](${repo.html_url})\\n` +\n  `🔀 *PR:* [#${pr.number}](${pr.html_url}) - ${pr.title}\\n` +\n  `👤 *Author:* @${pr.user}\\n` +\n  `⏰ *Started:* ${new Date().toLocaleString()}\\n` +\n  `🆔 *Analysis ID:* \`${$json.analysis_id}\``;\n\nreturn [{ json: { content: message } }];"
+      },
+      "id": "9",
+      "name": "Format Discord Success",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1500, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.discordWebhookUrl }}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ JSON.stringify({ content: $json.content }) }}"
+      },
+      "id": "10",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1750, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "const analysisId = $json.analysis_id;\n// Poll for analysis completion\n// In production, use a wait node or separate workflow triggered by analysis completion webhook\nreturn [{ json: { analysis_id: analysisId, poll: true } }];"
+      },
+      "id": "11",
+      "name": "Wait for Analysis",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 500]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "12",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1250, 500]
+    },
+    {
+      "parameters": {
+        "url": "=http://backend:8000/api/v1/analyses/{{ $json.analysis_id }}",
+        "method": "GET",
+        "options": {},
+        "jsonParameters": true
+      },
+      "id": "13",
+      "name": "Check Analysis Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1500, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "equal",
+              "value2": "completed"
+            }
+          ]
+        }
+      },
+      "id": "14",
+      "name": "Analysis Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1750, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "const analysis = items[0].json;\nconst repo = $json.repository;\nconst pr = $json.pull_request;\n\nconst emoji = analysis.critical_findings > 0 ? '🚨' : \n              analysis.high_findings > 0 ? '⚠️' : \n              analysis.medium_findings > 0 ? '⚡' : '✅';\n\nlet message = `${emoji} *Analysis Complete*\\n`;\nmessage += `📦 *Repository:* [${repo.full_name}](${repo.html_url})\\n`;\nmessage += `🔀 *PR:* [#${pr.number}](${pr.html_url}) - ${pr.title}\\n`;\nmessage += `📊 *Findings:* `;\nif (analysis.critical_findings > 0) message += `🔴 ${analysis.critical_findings} Critical `;\nif (analysis.high_findings > 0) message += `🟠 ${analysis.high_findings} High `;\nif (analysis.medium_findings > 0) message += `🟡 ${analysis.medium_findings} Medium `;\nif (analysis.low_findings > 0) message += `🔵 ${analysis.low_findings} Low `;\nif (analysis.info_findings > 0) message += `⚪ ${analysis.info_findings} Info `;\nmessage += `\\n`;\nmessage += `📈 *Technical Debt:* ${analysis.technical_debt_score?.toFixed(1) || 'N/A'}/100\\n`;\nmessage += `🛡️ *Maintainability:* ${analysis.maintainability_index?.toFixed(1) || 'N/A'}/100\\n`;\nmessage += `🔗 *View Details:* ${analysis.id}\\n`;\nmessage += `⏰ *Completed:* ${new Date().toLocaleString()}`;\n\nreturn [{ json: { text: message, channel: '#code-reviews' } }];"
+      },
+      "id": "15",
+      "name": "Format Completion Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.slackWebhookUrl }}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ JSON.stringify({ text: $json.text }) }}"
+      },
+      "id": "16",
+      "name": "Send Completion to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2250, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "const analysis = items[0].json;\nconst repo = $json.repository;\nconst pr = $json.pull_request;\n\nconst color = analysis.critical_findings > 0 ? 0xFF0000 : \n              analysis.high_findings > 0 ? 0xFF8C00 : \n              analysis.medium_findings > 0 ? 0xFFD700 : 0x00FF00;\n\nconst embed = {\n  title: `Analysis Complete: ${repo.full_name} - PR #${pr.number}`,\n  url: pr.html_url,\n  color: color,\n  fields: [\n    { name: '🔴 Critical', value: analysis.critical_findings.toString(), inline: true },\n    { name: '🟠 High', value: analysis.high_findings.toString(), inline: true },\n    { name: '🟡 Medium', value: analysis.medium_findings.toString(), inline: true },\n    { name: '🔵 Low', value: analysis.low_findings.toString(), inline: true },\n    { name: '⚪ Info', value: analysis.info_findings.toString(), inline: true },\n    { name: '📈 Technical Debt', value: `${analysis.technical_debt_score?.toFixed(1) || 'N/A'}/100`, inline: true },\n    { name: '🛡️ Maintainability', value: `${analysis.maintainability_index?.toFixed(1) || 'N/A'}/100`, inline: true },\n    { name: '🔀 PR', value: `[#${pr.number}](${pr.html_url})`, inline: true }\n  ],\n  footer: { text: `Agent Reviewer • Analysis ${analysis.id}` },\n  timestamp: new Date().toISOString()\n};\n\nreturn [{ json: { embeds: [embed] } }];"
+      },
+      "id": "17",
+      "name": "Format Discord Embed",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 600]
+    },
+    {
+      "parameters": {
+        "url": "={{ $credentials.discordWebhookUrl }}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ JSON.stringify($json) }}"
+      },
+      "id": "18",
+      "name": "Send Completion to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2250, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "const analysis = items[0].json;\n// If there are critical/high findings, post a comment on the PR\nif (analysis.critical_findings > 0 || analysis.high_findings > 0) {\n  return [{\n    json: {\n      post_comment: true,\n      analysis_id: analysis.id,\n      pr_number: $json.pull_request.number,\n      repo_full_name: $json.repository.full_name,\n      installation_id: $json.repository.installation_id\n    }\n  }];\n}\nreturn [{ json: { post_comment: false } }];"
+      },
+      "id": "19",
+      "name": "Should Post PR Comment?",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.post_comment }}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "20",
+      "name": "Post Comment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2250, 700]
+    },
+    {
+      "parameters": {
+        "functionCode": "const analysis = $json.analysis_id;\nconst prNumber = $json.pr_number;\nconst repo = $json.repo_full_name;\nconst installationId = $json.installation_id;\n\n// This would call the backend to post a PR comment with summary\n// For now, return the data needed\nreturn [{\n  json: {\n    url: `http://backend:8000/api/v1/webhooks/github/post-pr-comment`,\n    method: 'POST',\n    body: {\n      analysis_id: analysis,\n      pr_number: prNumber,\n      repo_full_name: repo,\n      installation_id: installationId\n    }\n  }\n}];"
+      },
+      "id": "21",
+      "name": "Prepare PR Comment Request",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2500, 700]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "method": "={{ $json.method }}",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ JSON.stringify($json.body) }}"
+      },
+      "id": "22",
+      "name": "Post PR Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2750, 700]
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Filter PR Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter PR Events": {
+      "main": [
+        [
+          {
+            "node": "Trigger Backend Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Backend Analysis": {
+      "main": [
+        [
+          {
+            "node": "Process Backend Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Backend Response": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait for Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Format Slack Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Slack Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Success": {
+      "main": [
+        [
+          {
+            "node": "Send to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Error": {
+      "main": [
+        [
+          {
+            "node": "Send to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Slack": {
+      "main": [
+        [
+          {
+            "node": "Format Discord Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discord Success": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Analysis": {
+      "main": [
+        [
+          {
+            "node": "Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "Check Analysis Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Analysis Status": {
+      "main": [
+        [
+          {
+            "node": "Analysis Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analysis Complete?": {
+      "main": [
+        [
+          {
+            "node": "Format Completion Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Completion Message": {
+      "main": [
+        [
+          {
+            "node": "Send Completion to Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format Discord Embed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Should Post PR Comment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discord Embed": {
+      "main": [
+        [
+          {
+            "node": "Send Completion to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Post PR Comment?": {
+      "main": [
+        [
+          {
+            "node": "Prepare PR Comment Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          []
+        ]
+      ]
+    },
+    "Prepare PR Comment Request": {
+      "main": [
+        [
+          {
+            "node": "Post PR Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "1"
+}

@@ -1,0 +1,109 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Test coverage
+htmlcov/
+.coverage
+.coverage.*
+pytest_cache/
+
+# Type checking
+.mypy_cache/
+.pytype/
+
+# Node modules
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Vite
+.env.local
+.env.*.local
+
+# Vercel
+.vercel
+
+# TypeScript cache
+*.tsbuildinfo
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# n8n
+n8n_data/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# SSL certificates
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+
+# Model files
+*.bin
+*.gguf
+*.safetensors
+
+# Large data files
+*.parquet
+*.arrow
+*.feather
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Profiling
+*.prof
+*.pstats
